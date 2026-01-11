@@ -23,17 +23,14 @@ import (
 const Version = "0.0.3"
 
 const DEFAULT_SERVER_NAME = "localhost"
-const DEFAULT_BIND_ADDRESS = "127.0.0.1"
-const DEFAULT_HTTPS_PORT = "4443"
-const DEFAULT_HTTP_PORT = "4444"
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10
 
 type Server struct {
 	Name                   string
+	tls                    bool
 	ServerName             string
 	Address                string
-	HttpsPort              int
-	HttpPort               int
+	Port                   int
 	verbose                bool
 	debug                  bool
 	wg                     sync.WaitGroup
@@ -66,21 +63,17 @@ func NewServer() (*Server, error) {
 		return nil, Fatal(err)
 	}
 	ViperSetDefault("server_name", DEFAULT_SERVER_NAME)
-	ViperSetDefault("bind_address", DEFAULT_BIND_ADDRESS)
-	ViperSetDefault("https_port", DEFAULT_HTTPS_PORT)
-	ViperSetDefault("http_port", DEFAULT_HTTP_PORT)
 	ViperSetDefault("shutdown_timeout_seconds", DEFAULT_SHUTDOWN_TIMEOUT_SECONDS)
 	ViperSetDefault("ca", filepath.Join(userConfigDir, ProgramName(), "ca.pem"))
 	ViperSetDefault("cert", filepath.Join(userConfigDir, ProgramName(), "learnd.pem"))
 	ViperSetDefault("key", filepath.Join(userConfigDir, ProgramName(), "learnd.key"))
-	ViperSetDefault("enable_proxy", true)
 
 	s := Server{
-		Name:                   "netboot",
+		Name:                   "learnd",
+		tls:                    ViperGetBool("tls"),
 		ServerName:             ViperGetString("server_name"),
-		Address:                ViperGetString("bind_address"),
-		HttpPort:               ViperGetInt("http_port"),
-		HttpsPort:              ViperGetInt("https_port"),
+		Address:                ViperGetString("address"),
+		Port:                   ViperGetInt("port"),
 		verbose:                ViperGetBool("verbose"),
 		debug:                  ViperGetBool("debug"),
 		shutdown:               make(chan struct{}, 1),
@@ -108,24 +101,16 @@ func (s *Server) Stop() error {
 
 func (s *Server) Start() error {
 
-	//httpMux := http.NewServeMux()
-	//httpsMux.HandleFunc("POST /learn/", s.HandlePostLearn)
-	httpsMux := http.NewServeMux()
-	httpsMux.HandleFunc("POST /learn/", s.HandlePostLearn)
-
-	httpsServer := &http.Server{
-		Addr:    fmt.Sprintf("%s:%d", s.Address, s.HttpsPort),
-		Handler: httpsMux,
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /learn/", s.HandlePostLearn)
+	server := &http.Server{
+		Addr:    fmt.Sprintf("%s:%d", s.Address, s.Port),
+		Handler: mux,
 	}
+	serverMode := "HTTP"
+	if s.tls {
+		serverMode = "HTTPS"
 
-	/*
-		httpServer := &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", s.Address, s.HttpPort),
-			Handler: httpMux,
-		}
-	*/
-
-	if s.certFile != "" || s.keyFile != "" || s.caFile != "" {
 		if s.certFile == "" || s.keyFile == "" || s.caFile == "" {
 			return fmt.Errorf("incomplete TLS config: cert=%s key=%s ca=%s\n", s.certFile, s.keyFile, s.caFile)
 		}
@@ -146,7 +131,7 @@ func (s *Server) Start() error {
 			return fmt.Errorf("error loading client validation certificate authority file: %v", err)
 		}
 
-		httpsServer.TLSConfig = &tls.Config{
+		server.TLSConfig = &tls.Config{
 			ServerName:   s.ServerName,
 			Certificates: []tls.Certificate{cert},
 			ClientAuth:   tls.VerifyClientCertIfGiven,
@@ -159,27 +144,21 @@ func (s *Server) Start() error {
 
 	s.wg.Add(1)
 	go func() {
-		defer log.Printf("[%s] HTTPS server exiting", s.Name)
+		defer log.Printf("[%s] %s server exiting", s.Name, serverMode)
 		defer s.wg.Done()
-		log.Printf("[%s] HTTPS server listening on %s\n", s.Name, httpsServer.Addr)
-		err := httpsServer.ListenAndServeTLS("", "")
-		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("[%s] ListenAndServeTLS failed: %v", s.Name, err)
-		}
-	}()
-
-	/*
-		s.wg.Add(1)
-		go func() {
-			defer log.Printf("[%s] HTTP server exiting", s.Name)
-			defer s.wg.Done()
-			log.Printf("[%s] HTTP server listening on %s\n", s.Name, httpServer.Addr)
-			err := httpServer.ListenAndServe()
+		log.Printf("[%s] %s server listening on %s\n", s.Name, serverMode, server.Addr)
+		if s.tls {
+			err := server.ListenAndServeTLS("", "")
+			if err != nil && err != http.ErrServerClosed {
+				log.Fatalf("[%s] ListenAndServeTLS failed: %v", s.Name, err)
+			}
+		} else {
+			err := server.ListenAndServe()
 			if err != nil && err != http.ErrServerClosed {
 				log.Fatalf("[%s] ListenAndServe failed: %v", s.Name, err)
 			}
-		}()
-	*/
+		}
+	}()
 
 	s.wg.Add(1)
 	go func() {
@@ -189,19 +168,12 @@ func (s *Server) Start() error {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.shutdownTimeoutSeconds)*time.Second)
 		defer cancel()
 
-		log.Printf("[%s] shutting down HTTPS server", s.Name)
-		err := httpsServer.Shutdown(ctx)
+		log.Printf("[%s] shutting down %s server", s.Name, serverMode)
+		err := server.Shutdown(ctx)
 		if err != nil {
-			log.Fatalf("[%s] HTTPS Server Shutdown failed: %v", s.Name, err)
+			log.Fatalf("[%s] %s Server Shutdown failed: %v", s.Name, serverMode, err)
 		}
 
-		/*
-			log.Printf("[%s] shutting down HTTP server", s.Name)
-			err = httpServer.Shutdown(ctx)
-			if err != nil {
-				log.Fatalf("[%s] HTTP Server Shutdown failed: %v", s.Name, err)
-			}
-		*/
 	}()
 
 	// FIXME: detect listening server port here instead of just sleeping

@@ -60,4 +60,7 @@ func Execute() {
 func init() {
 	CobraInit(rootCmd)
 	daemon.AddDaemonCommands(rootCmd, "server")
+	OptionSwitch(rootCmd, "tls", "", "enable tls mode")
+	OptionString(rootCmd, "address", "a", "127.0.0.1", "listen address")
+	OptionInt(rootCmd, "port", "p", 2015, "listen port")
 }
