@@ -1,0 +1,7 @@
+rspam-learnd
+rspam-learnd.exe
+notes
+cruft
+*.core
+*.log
+*postactivate
