@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const Version = "0.0.3"
+const Version = "0.0.4"
 
 const DEFAULT_SERVER_NAME = "localhost"
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10
