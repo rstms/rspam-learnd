@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+DIR=~/.config/rspam-learnd
+
+mkdir -p $DIR
+
+if [ ! -f $dir/ca.pem ]; then
+    mkcert --force --chain ca.pem
+    mv ca.pem $DIR
+fi
+
+if [ ! -f $DIR/learnd.pem ]; then
+	mkcert --force --duration 1y learnd --cert-file $DIR/learnd.pem --key-file $DIR/learnd.key -- --san localhost --san 127.0.0.1
+fi

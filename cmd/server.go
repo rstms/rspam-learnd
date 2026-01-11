@@ -31,33 +31,30 @@ POSSIBILITY OF SUCH DAMAGE.
 package cmd
 
 import (
-	"os"
+	"github.com/rstms/rspam-learnd/server"
+	"log"
 
-	"github.com/rstms/cobra-daemon"
 	"github.com/spf13/cobra"
 )
 
-var cfgFile string
-
-var rootCmd = &cobra.Command{
-	Version: "0.0.1",
-	Use:     "rspam-learnd",
-	Short:   "https server for submitting messages to rspamd learn subsystem",
+var serverCmd = &cobra.Command{
+	Use:   "server",
+	Short: "run the rspamd-learn HTTPS server",
 	Long: `
-Serve a TLS http endpoint requiring client certificates.  The POST /learn/
-endpoint submits messages via rspamc.  All messages are stored in a queue
-which allows the client to send multiple messages without waiting for
-the rspamc results.
+implement the server processing loop
 `,
+	Run: func(cmd *cobra.Command, args []string) {
+		s, err := server.NewServer()
+		if err != nil {
+			log.Fatal(err)
+		}
+		err = s.Run()
+		if err != nil {
+			log.Fatal(err)
+		}
+	},
 }
 
-func Execute() {
-	err := rootCmd.Execute()
-	if err != nil {
-		os.Exit(1)
-	}
-}
 func init() {
-	CobraInit(rootCmd)
-	daemon.AddDaemonCommands(rootCmd, "server")
+	rootCmd.AddCommand(serverCmd)
 }
