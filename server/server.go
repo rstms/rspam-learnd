@@ -24,6 +24,7 @@ const Version = "0.0.4"
 
 const DEFAULT_SERVER_NAME = "localhost"
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10
+const SAMPLE_QUEUE_LENGTH = 1024
 
 type Server struct {
 	Name                   string
@@ -81,6 +82,7 @@ func NewServer() (*Server, error) {
 		caFile:                 ViperGetString("ca"),
 		certFile:               ViperGetString("cert"),
 		keyFile:                ViperGetString("key"),
+		Queue:                  make(chan *sample.Sample, SAMPLE_QUEUE_LENGTH),
 	}
 
 	if s.debug {
@@ -203,6 +205,9 @@ func (s *Server) Run() error {
 			select {
 			case sample, ok := <-s.Queue:
 				if ok {
+					if s.verbose {
+						log.Printf("[%s] dequed sample: %+v\n", s.Name, sample)
+					}
 					sample.Submit()
 				} else {
 					log.Printf("[%s] sample queue closed\n", s.Name)
@@ -275,12 +280,18 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if s.verbose {
+		log.Printf("parsing form\n")
+	}
 	err := r.ParseMultipartForm(256 << 20) // limit file size to 256MB
 	if err != nil {
 		fail(w, fmt.Sprintf("failed parsing upload form: %v", err), http.StatusBadRequest)
 		return
 	}
 
+	if s.verbose {
+		log.Printf("creating uploadFile\n")
+	}
 	uploadFile, _, err := r.FormFile("file")
 	if err != nil {
 		fail(w, fmt.Sprintf("failed retreiving upload file: %v", err), http.StatusBadRequest)
@@ -288,6 +299,9 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uploadFile.Close()
 
+	if s.verbose {
+		log.Printf("unmarshalling domains\n")
+	}
 	domainsString := r.FormValue("domains")
 	var domains []string
 	err = json.Unmarshal([]byte(domainsString), &domains)
@@ -296,6 +310,9 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.verbose {
+		log.Printf("reading uploadFile into buffer\n")
+	}
 	var buf bytes.Buffer
 	count, err := io.Copy(&buf, uploadFile)
 	if err != nil {
@@ -303,15 +320,21 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	message := buf.Bytes()
+
+	if s.verbose {
+		log.Printf("creating sample: class=%s username=%s domains=%v message=(%d bytes)\n", class, username, domains, len(message))
+	}
+
 	sample := sample.NewSample(class, username, domains, &message)
 
+	if s.verbose {
+		log.Printf("enqueing sample: %v\n", sample)
+	}
 	s.Queue <- sample
 	s.QueueCount++
 	if s.verbose {
 		log.Printf("queued %s %s sample: byteCount=%v queueCount=%d dequeCount=%d\n", username, class, count, s.QueueCount, s.DequeueCount)
 	}
 
-	return
 	fail(w, "WAT?", http.StatusNotFound)
-
 }
