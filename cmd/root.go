@@ -40,7 +40,7 @@ import (
 var cfgFile string
 
 var rootCmd = &cobra.Command{
-	Version: "0.0.5",
+	Version: "0.0.6",
 	Use:     "rspam-learnd",
 	Short:   "https server for submitting messages to rspamd learn subsystem",
 	Long: `
