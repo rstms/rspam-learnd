@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -25,6 +24,7 @@ const Version = "0.0.6"
 const DEFAULT_SERVER_NAME = "localhost"
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10
 const SAMPLE_QUEUE_LENGTH = 1024
+const DEFAULT_CACHE_DIR = "/var/learnd"
 
 type Server struct {
 	Name                   string
@@ -44,6 +44,7 @@ type Server struct {
 	Queue                  chan *sample.Sample
 	QueueCount             int
 	DequeueCount           int
+	CacheDir               string
 }
 
 func expandFilename(filename string) (string, error) {
@@ -68,6 +69,7 @@ func NewServer() (*Server, error) {
 	ViperSetDefault("ca", filepath.Join(userConfigDir, ProgramName(), "ca.pem"))
 	ViperSetDefault("cert", filepath.Join(userConfigDir, ProgramName(), "learnd.pem"))
 	ViperSetDefault("key", filepath.Join(userConfigDir, ProgramName(), "learnd.key"))
+	ViperSetDefault("cache_dir", DEFAULT_CACHE_DIR)
 
 	s := Server{
 		Name:                   "learnd",
@@ -83,10 +85,18 @@ func NewServer() (*Server, error) {
 		certFile:               ViperGetString("cert"),
 		keyFile:                ViperGetString("key"),
 		Queue:                  make(chan *sample.Sample, SAMPLE_QUEUE_LENGTH),
+		CacheDir:               ViperGetString("cache_dir"),
 	}
 
 	if s.debug {
 		log.Printf("[%s] config: %+v\n", s.Name, s)
+	}
+
+	if !IsDir(s.CacheDir) {
+		err := os.Mkdir(s.CacheDir, 0700)
+		if err != nil {
+			return nil, Fatal(err)
+		}
 	}
 
 	return &s, nil
@@ -208,9 +218,12 @@ func (s *Server) Run() error {
 					if s.verbose {
 						log.Printf("[%s] dequed sample: %+v\n", s.Name, sample)
 					}
-					sample.Submit()
+					err := sample.Submit()
+					if err != nil {
+						log.Printf("[%s] sample submission failed: %v\n", s.Name, err)
+					}
 				} else {
-					log.Printf("[%s] sample queue closed\n", s.Name)
+					log.Printf("[%s] queue closed\n", s.Name)
 					return
 				}
 			case <-sigint:
@@ -257,7 +270,10 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	class := path[0]
 	username := path[1]
-	if class != "ham" && class != "spam" {
+	switch class {
+	case "ham":
+	case "spam":
+	default:
 		fail(w, "unknown class", http.StatusBadRequest)
 		return
 	}
@@ -280,18 +296,13 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if s.verbose {
-		log.Printf("parsing form\n")
-	}
+
 	err := r.ParseMultipartForm(256 << 20) // limit file size to 256MB
 	if err != nil {
 		fail(w, fmt.Sprintf("failed parsing upload form: %v", err), http.StatusBadRequest)
 		return
 	}
 
-	if s.verbose {
-		log.Printf("creating uploadFile\n")
-	}
 	uploadFile, _, err := r.FormFile("file")
 	if err != nil {
 		fail(w, fmt.Sprintf("failed retreiving upload file: %v", err), http.StatusBadRequest)
@@ -299,41 +310,42 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 	}
 	defer uploadFile.Close()
 
-	if s.verbose {
-		log.Printf("unmarshalling domains\n")
+	filename, err := s.cacheMessage(class, uploadFile)
+	if err != nil {
+		fail(w, fmt.Sprintf("failed caching uploaded file: %v", err), http.StatusInternalServerError)
+		return
 	}
+
 	domainsString := r.FormValue("domains")
 	var domains []string
 	err = json.Unmarshal([]byte(domainsString), &domains)
 	if err != nil {
-		fail(w, "Failed to unmarshal domains", http.StatusBadRequest)
+		fail(w, "failed parsing domains", http.StatusBadRequest)
 		return
 	}
 
-	if s.verbose {
-		log.Printf("reading uploadFile into buffer\n")
-	}
-	var buf bytes.Buffer
-	count, err := io.Copy(&buf, uploadFile)
+	sample, err := sample.NewSample(class, username, domains, filename)
 	if err != nil {
-		fail(w, err.Error(), http.StatusBadRequest)
+		fail(w, fmt.Sprintf("failed creating sample: %v", err), http.StatusBadRequest)
 		return
-	}
-	message := buf.Bytes()
-
-	if s.verbose {
-		log.Printf("creating sample: class=%s username=%s domains=%v message=(%d bytes)\n", class, username, domains, len(message))
-	}
-
-	sample := sample.NewSample(class, username, domains, &message)
-
-	if s.verbose {
-		log.Printf("enqueing sample: %v\n", sample)
 	}
 	s.Queue <- sample
 	s.QueueCount++
 	if s.verbose {
-		log.Printf("queued %s %s sample: byteCount=%v queueCount=%d dequeCount=%d\n", username, class, count, s.QueueCount, s.DequeueCount)
+		log.Printf("queued=%d\n", s.QueueCount)
 	}
 	// return 200
+}
+
+func (s *Server) cacheMessage(class string, messageFile io.Reader) (string, error) {
+	cacheFile, err := os.CreateTemp(s.CacheDir, class+"*")
+	if err != nil {
+		return "", Fatal(err)
+	}
+	defer cacheFile.Close()
+	_, err = io.Copy(cacheFile, messageFile)
+	if err != nil {
+		return "", Fatal(err)
+	}
+	return cacheFile.Name(), nil
 }

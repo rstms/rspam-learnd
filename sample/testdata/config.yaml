@@ -1,3 +1,4 @@
 rspam_learnd:
   verbose: true
   debug: true
+  cache_dir: testdata/cache

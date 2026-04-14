@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"os"
 	"os/exec"
-	"strings"
 )
 
 const Version = "0.0.6"
@@ -14,55 +14,51 @@ type Sample struct {
 	Username string
 	Class    string
 	Domains  []string
-	Message  *[]byte
+	Filename string
 	verbose  bool
 }
 
-func NewSample(class, username string, domains []string, message *[]byte) *Sample {
+func NewSample(class, username string, domains []string, filename string) (*Sample, error) {
+
 	s := Sample{
 		Class:    class,
 		Username: username,
 		Domains:  domains,
-		Message:  message,
-		verbose:  ViperGetBool("verbose"),
+		Filename: filename,
 	}
-	return &s
+	return &s, nil
 }
 
-func (s *Sample) Submit() {
-	if s.verbose {
-		log.Printf("Submitting %s %s domains=%v\n", s.Username, s.Class, s.Domains)
+func (s *Sample) Submit() error {
+	verbose := ViperGetBool("verbose")
+	if verbose {
+		log.Printf("Submitting %s %s %v %s\n", s.Username, s.Class, s.Domains, s.Filename)
 	}
 	for _, domain := range s.Domains {
-		args := []string{"-d", fmt.Sprintf("%s@%s", s.Username, domain)}
-		if s.verbose {
-			args = append(args, "-v")
+		args := []string{}
+		if verbose {
+			args = []string{"-v"}
 		}
-		args = append(args, "learn_"+s.Class)
-		if s.verbose {
-			log.Printf("cmd=rspamc %s\n", strings.Join(args, " "))
-		}
+		args = append(args, []string{"-d", fmt.Sprintf("%s@%s", s.Username, domain), "learn_" + s.Class, s.Filename}...)
 		cmd := exec.Command("rspamc", args...)
-		cmd.Stdin = bytes.NewBuffer(*s.Message)
 		var oBuf bytes.Buffer
 		var eBuf bytes.Buffer
 		cmd.Stdout = &oBuf
 		cmd.Stderr = &eBuf
 		exitCode := -1
+		if verbose {
+			log.Printf("%s\n", cmd.String())
+		}
 		err := cmd.Run()
 		if err != nil {
 			switch e := err.(type) {
 			case *exec.ExitError:
 				exitCode = e.ExitCode()
 			default:
-				log.Printf("rspamc error: %v", err)
-				return
+				return Fatalf("rspamc error: %v", err)
 			}
 		} else {
 			exitCode = cmd.ProcessState.ExitCode()
-		}
-		if exitCode != 0 {
-			log.Printf("rspamc exited: %d", exitCode)
 		}
 		stderr := eBuf.String()
 		if stderr != "" {
@@ -72,9 +68,17 @@ func (s *Sample) Submit() {
 		if stdout != "" {
 			log.Printf("rspamc stdout: %s", stdout)
 		}
+		if exitCode != 0 {
+			return Fatalf("rspamc exited: %d", exitCode)
+		}
 
+	}
+
+	err := os.Remove(s.Filename)
+	if err != nil {
+		return Fatal(err)
 	}
 	// debugging delay
 	//time.Sleep(1 * time.Second)
-
+	return nil
 }

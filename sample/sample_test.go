@@ -19,7 +19,10 @@ func TestSample(t *testing.T) {
 	class := "sample_class"
 	username := os.Getenv("USER")
 	domains := []string{"example.org"}
-	message := []byte(TEST_MESSAGE)
-	s := NewSample(class, username, domains, &message)
+	filename := "testdata/sample"
+	err := os.WriteFile(filename, []byte(TEST_MESSAGE), 0600)
+	require.Nil(t, err)
+	s, err := NewSample(class, username, domains, filename)
+	require.Nil(t, err)
 	require.NotNil(t, s)
 }
