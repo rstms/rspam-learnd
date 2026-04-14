@@ -23,7 +23,7 @@ const Version = "0.0.6"
 
 const DEFAULT_SERVER_NAME = "localhost"
 const DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 10
-const SAMPLE_QUEUE_LENGTH = 1024
+const SAMPLE_QUEUE_LENGTH = 10240
 const DEFAULT_CACHE_DIR = "/var/learnd"
 
 type Server struct {
