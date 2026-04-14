@@ -215,6 +215,7 @@ func (s *Server) Run() error {
 			select {
 			case sample, ok := <-s.Queue:
 				if ok {
+					s.QueueCount--
 					if s.verbose {
 						log.Printf("[%s] dequed sample: %+v\n", s.Name, sample)
 					}
