@@ -8,7 +8,7 @@ import (
 	"os/exec"
 )
 
-const Version = "0.0.6"
+const Version = "0.0.7"
 
 type Sample struct {
 	Username string
