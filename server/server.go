@@ -335,6 +335,5 @@ func (s *Server) HandlePostLearn(w http.ResponseWriter, r *http.Request) {
 	if s.verbose {
 		log.Printf("queued %s %s sample: byteCount=%v queueCount=%d dequeCount=%d\n", username, class, count, s.QueueCount, s.DequeueCount)
 	}
-
-	fail(w, "WAT?", http.StatusNotFound)
+	// return 200
 }
